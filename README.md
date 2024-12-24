@@ -78,7 +78,7 @@ cd NOVA && pip install .
 ### 1.2 From Git
 <a id="from-git"></a>
 
-You can also install from the remote repository **if you have set your Github SSH key**: 
+You can also install from the remote repository **if you have set your GitHub SSH key**: 
 
 ```bash
 pip install diffusers transformers accelerate imageio[ffmpeg]
