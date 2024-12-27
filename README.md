@@ -7,6 +7,7 @@
 <a href="https://huggingface.co/spaces/BAAI/nova-d48w1024-sdxl1024"><img src="https://img.shields.io/badge/🤗 Demo-T2I-%26840707.svg" alt="T2IDemo"></a>
 <a href="https://huggingface.co/spaces/BAAI/nova-d48w1024-osp480"><img src="https://img.shields.io/badge/🤗 Demo-T2V-%26840707.svg" alt="T2VDemo"></a>
 <a href="http://bitterdhg.github.io/NOVA_page"><img src="https://img.shields.io/badge/Webpage-NOVA-%237CB4F7.svg" alt="Webpage"></a>
+<a href="https://replicate.com/chenxwh/nova-t2v"><img src="https://replicate.com/chenxwh/nova-t2v/badge"></a>
 </p>
 
 [Haoge Deng](https://scholar.google.com/citations?user=S2sbvjgAAAAJ&hl=zh-CN&oi=ao)<sup>1,4*</sup>, [Ting Pan](https://scholar.google.com/citations?&user=qQv6YbsAAAAJ)<sup>2,4*</sup>, [Haiwen Diao](https://scholar.google.com/citations?user=46eCjHQAAAAJ&hl=zh-CN)<sup>3,4*</sup>, [Zhengxiong Luo](https://scholar.google.com/citations?user=Sz1yTZsAAAAJ&hl=zh-CN)<sup>4*</sup>, [Yufeng Cui](https://scholar.google.com/citations?user=5Ydha2EAAAAJ&hl=zh-CN)<sup>4</sup><br>
