@@ -61,6 +61,7 @@ We present **NOVA** (**NO**n-Quantized **V**ideo **A**utoregressive Model), a mo
 - [2. Quick Start](#2-quick-start)
   - [2.1 Text to Image](#text-to-image-quickstart)
   - [2.2 Text to Video](#text-to-video-quickstart)
+  - [2.3 Image to Video](#image-to-video-quickstart)
 - [3. Gradio Demo](#3-gradio-demo)
 - [4. Train](#4-train)
 - [5. Inference](#5-inference)
@@ -147,6 +148,38 @@ export_to_video(video, "jellyfish_v2.mp4", fps=12)
 prompt = "Many spotted jellyfish pulsating under water."
 image = pipe(prompt, max_latent_length=1).frames[0, 0]
 export_to_image(image, "jellyfish.jpg")
+```
+
+### 2.3  Image to Video
+<a id="image-to-video-quickstart"></a>
+
+```python
+import os, torch, PIL.Image, numpy as np
+from diffnext.pipelines import NOVAPipeline
+from diffnext.utils import export_to_image, export_to_video
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+model_id = "BAAI/nova-d48w1024-osp480"
+low_memory = False
+
+model_args = {"torch_dtype": torch.float16, "trust_remote_code": True}
+pipe = NOVAPipeline.from_pretrained(model_id, **model_args)
+
+if low_memory:
+    # Use CPU model offload routine and expandable allocator if OOM.
+    pipe.enable_model_cpu_offload()
+else:
+    pipe = pipe.to("cuda")
+
+prompt = "Many spotted jellyfish pulsating under water."
+
+# Step1: Generate or select an image that matches the resolution 768x480.
+image = pipe(prompt, max_latent_length=1).frames[0, 0]
+export_to_image(image, "jellyfish.jpg")
+
+# Step2: Use this image to generate subsequent frames.
+video = pipe(prompt, image=np.array(PIL.Image.open("jellyfish.jpg")), max_latent_length=9).frames[0]
+export_to_video(video, "jellyfish.mp4", fps=12)
 ```
 
 ## 3. Gradio Demo
