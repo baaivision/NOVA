@@ -21,6 +21,8 @@ import torch
 from torch import nn
 from tqdm import tqdm
 
+from diffnext.models.guidance_scaler import GuidanceScaler
+
 
 class Transformer3DModel(nn.Module):
     """Base 3D transformer model for video generation."""
@@ -98,65 +100,57 @@ class Transformer3DModel(nn.Module):
         return {"loss": loss.sum()}
 
     @torch.no_grad()
-    def denoise(self, z, x, guidance_scale=1, generator=None, pred_ids=None) -> torch.Tensor:
+    def denoise(self, z, x, guidance_scaler, generator=None, pred_ids=None) -> torch.Tensor:
         """Run diffusion denoising process."""
         self.sample_scheduler._step_index = None  # Reset counter.
         for t in self.sample_scheduler.timesteps:
-            x_pack = torch.cat([x] * 2) if guidance_scale > 1 else x
             timestep = torch.as_tensor(t, device=x.device).expand(z.shape[0])
-            noise_pred = self.image_decoder(x_pack, timestep, z, pred_ids)
-            if guidance_scale > 1:
-                cond, uncond = noise_pred.chunk(2)
-                noise_pred = uncond.add_(cond.sub_(uncond).mul_(guidance_scale))
-            noise_pred = self.image_encoder.patch_embed.unpatchify(noise_pred)
-            x = self.sample_scheduler.step(noise_pred, t, x, generator=generator).prev_sample
+            model_pred = self.image_decoder(guidance_scaler.expand(x), timestep, z, pred_ids)
+            model_pred = guidance_scaler.scale(model_pred)
+            model_pred = self.image_encoder.patch_embed.unpatchify(model_pred)
+            x = self.sample_scheduler.step(model_pred, t, x, generator=generator).prev_sample
         return self.image_encoder.patch_embed.patchify(x)
 
     @torch.inference_mode()
     def generate_frame(self, states: Dict, inputs: Dict):
         """Generate a batch of frames."""
-        guidance_scale = inputs.get("guidance_scale", 1)
-        min_guidance_scale = inputs.get("min_guidance_scale", guidance_scale)
-        max_guidance_scale = inputs.get("max_guidance_scale", guidance_scale)
+        guidance_scaler = GuidanceScaler(**inputs)
         generator = self.mask_embed.generator = inputs.get("generator", None)
         all_num_preds = [_ for _ in inputs["num_preds"] if _ > 0]
-        guidance_end = max_guidance_scale if states["t"] else guidance_scale
-        guidance_start = max_guidance_scale if states["t"] else min_guidance_scale
         c, x, self.mask_embed.mask = states["c"], states["x"].zero_(), None
         pos = self.image_pos_embed.get_pos(1, c.size(0)) if self.image_pos_embed else None
         for i, num_preds in enumerate(self.progress_bar(all_num_preds, inputs.get("tqdm2", False))):
-            guidance_level = (i + 1) / len(all_num_preds)
-            guidance_scale = (guidance_end - guidance_start) * guidance_level + guidance_start
+            guidance_scaler.decay_guidance_scale((i + 1) / len(all_num_preds))
             z = self.mask_embed(self.image_encoder.patch_embed(x))
             pred_mask, pred_ids = self.mask_embed.get_pred_mask(num_preds)
-            pred_ids = torch.cat([pred_ids] * 2) if guidance_scale > 1 else pred_ids
+            pred_ids = guidance_scaler.expand(pred_ids)
             prev_ids = prev_ids if i else pred_ids.new_empty((pred_ids.size(0), 0, 1))
-            z = torch.cat([z] * 2) if guidance_scale > 1 else z
-            z = self.image_encoder(z, c, prev_ids, pos=pos)
+            z = self.image_encoder(guidance_scaler.expand(z), c, prev_ids, pos=pos)
             prev_ids = torch.cat([prev_ids, pred_ids], dim=1)
             states["noise"].normal_(generator=generator)
-            sample = self.denoise(z, states["noise"], guidance_scale, generator, pred_ids)
+            sample = self.denoise(z, states["noise"], guidance_scaler, generator, pred_ids)
             x.add_(self.image_encoder.patch_embed.unpatchify(sample.mul_(pred_mask)))
 
     @torch.inference_mode()
     def generate_video(self, inputs: Dict):
         """Generate a batch of videos."""
-        guidance_scale = inputs.get("guidance_scale", 1)
+        guidance_scaler = GuidanceScaler(**inputs)
         max_latent_length = inputs.get("max_latent_length", 1)
         self.sample_scheduler.set_timesteps(inputs.get("num_diffusion_steps", 25))
         states = {"x": inputs["x"], "noise": inputs["x"].clone()}
         latents, self.mask_embed.pred_ids, time_pos = inputs.get("latents", []), None, []
-        if self.image_pos_embed:
+        if self.image_pos_embed:  # RoPE.
             time_pos = self.video_pos_embed.get_pos(max_latent_length).chunk(max_latent_length, 1)
-        else:
+        else:  # Absolute PE, which will be deprecated in the future.
             time_embed = self.video_pos_embed.get_time_embed(max_latent_length)
+        inputs["c"] = guidance_scaler.expand_text(inputs["c"])
         self.video_encoder.enable_kvcache(max_latent_length > 1)
         for states["t"] in self.progress_bar(range(max_latent_length), inputs.get("tqdm1", True)):
             pos = time_pos[states["t"]] if time_pos else None
             c = self.video_encoder.patch_embed(states["x"])
             c.__setitem__(slice(None), self.mask_embed.bos_token) if states["t"] == 0 else c
             c = self.video_pos_embed(c.add_(time_embed[states["t"]])) if not time_pos else c
-            c = torch.cat([c] * 2) if guidance_scale > 1 else c
+            c = guidance_scaler.expand(c, padding=self.mask_embed.bos_token)
             c = states["c"] = self.video_encoder(c, None if states["t"] else inputs["c"], pos=pos)
             if not isinstance(self.video_encoder.mixer, torch.nn.Identity):
                 states["c"] = self.video_encoder.mixer(states["*"], c) if states["t"] else c

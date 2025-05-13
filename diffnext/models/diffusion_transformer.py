@@ -80,8 +80,7 @@ class Block(nn.Module):
         self.norm1, self.norm2 = nn.LayerNorm(dim), nn.LayerNorm(dim)
         self.attn = Attention(dim, num_heads, qkv_bias=qkv_bias)
         self.mlp = MLP(dim, mlp_ratio=mlp_ratio)
-        self.attn_checkpointing, self.mlp_checkpointing = False, False
-        self.stg_skip = False
+        self.attn_checkpointing = self.mlp_checkpointing = self.stg_skip = False
 
     def forward_modulation(self, x, z) -> Tuple[torch.Tensor, Tuple[torch.Tensor]]:
         return self.modulation(x, z)

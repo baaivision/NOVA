@@ -45,7 +45,7 @@ class NOVAC2IPipeline(DiffusionPipeline, PipelineMixin):
         num_inference_steps=64,
         num_diffusion_steps=25,
         guidance_scale=5,
-        min_guidance_scale=5,
+        min_guidance_scale=None,
         negative_prompt=None,
         num_images_per_prompt=1,
         generator=None,
@@ -65,6 +65,8 @@ class NOVAC2IPipeline(DiffusionPipeline, PipelineMixin):
                 The number of denoising steps.
             guidance_scale (float, *optional*, defaults to 5):
                 The classifier guidance scale.
+            min_guidance_scale (float, *optional*):
+                The minimum classifier guidance scale.
             negative_prompt (int or List[int], *optional*):
                 The prompt or prompts to guide what to not include in image generation.
             num_images_per_prompt (int, *optional*, defaults to 1):
@@ -89,7 +91,8 @@ class NOVAC2IPipeline(DiffusionPipeline, PipelineMixin):
         inputs["c"] = [self.encode_prompt(**dict(_ for _ in inputs.items() if "prompt" in _[0]))]
         inputs["batch_size"] = len(inputs["c"][0]) // (2 if guidance_scale > 1 else 1)
         _, outputs = inputs.pop("self"), self.transformer(inputs)
-        outputs["x"] = self.image_processor.decode_latents(self.vae, outputs["x"])
+        if output_type != "latent":
+            outputs["x"] = self.image_processor.decode_latents(self.vae, outputs["x"])
         outputs["x"] = self.image_processor.postprocess(outputs["x"], output_type)
         return NOVAPipelineOutput(**{"images": outputs["x"]})
 
