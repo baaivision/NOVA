@@ -61,6 +61,11 @@ class NOVAPipeline(DiffusionPipeline, PipelineMixin):
         num_diffusion_steps=25,
         max_latent_length=1,
         guidance_scale=5,
+        guidance_trunc=0,
+        guidance_renorm=1,
+        image_guidance_scale=0,
+        spatiotemporal_guidance_scale=0,
+        flow_shift=None,
         motion_flow=5,
         negative_prompt=None,
         image=None,
@@ -86,6 +91,16 @@ class NOVAPipeline(DiffusionPipeline, PipelineMixin):
                 The maximum number of latents to generate. ``1`` for image generation.
             guidance_scale (float, *optional*, defaults to 5):
                 The classifier guidance scale.
+            guidance_trunc (float, *optional*, defaults to 0):
+                The truncation threshold to classifier guidance.
+            guidance_renorm (float, *optional*, defaults to 1):
+                The minimal renorm scale to classifier guidance.
+            image_guidance_scale (float, *optional*, defaults to 0):
+                The image guidance scale.
+            spatiotemporal_guidance_scale (float, *optional*, defaults to 0):
+                The spatiotemporal guidance scale.
+            flow_shift (float, *optional*)
+                The shift value for the timestep schedule.
             motion_flow  (float, *optional*, defaults to 5):
                 The motion flow value for video generation.
             negative_prompt (str or List[str], *optional*):
@@ -111,6 +126,7 @@ class NOVAPipeline(DiffusionPipeline, PipelineMixin):
             NOVAPipelineOutput: The pipeline output.
         """
         self.guidance_scale = guidance_scale
+        self.scheduler.set_shift(flow_shift) if flow_shift else None
         inputs = {"generator": generator, **locals()}
         num_patches = int(np.prod(self.transformer.config.image_base_size))
         mask_ratios = np.cos(0.5 * np.pi * np.arange(num_inference_steps + 1) / num_inference_steps)

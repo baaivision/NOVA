@@ -122,7 +122,7 @@ class DiffusionTransformer(nn.Module):
         patch_size=2,
         image_size=32,
         image_dim=None,
-        modulation=False,
+        modulation=True,
     ):
         super(DiffusionTransformer, self).__init__()
         final_norm = AdaLayerNormSingle if modulation else AdaLayerNormZero

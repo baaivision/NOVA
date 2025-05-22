@@ -104,6 +104,7 @@ class Transformer3DModel(nn.Module):
         """Run diffusion denoising process."""
         self.sample_scheduler._step_index = None  # Reset counter.
         for t in self.sample_scheduler.timesteps:
+            z, pred_ids = guidance_scaler.maybe_disable(t, z, pred_ids)
             timestep = torch.as_tensor(t, device=x.device).expand(z.shape[0])
             model_pred = self.image_decoder(guidance_scaler.expand(x), timestep, z, pred_ids)
             model_pred = guidance_scaler.scale(model_pred)
@@ -128,7 +129,7 @@ class Transformer3DModel(nn.Module):
             z = self.image_encoder(guidance_scaler.expand(z), c, prev_ids, pos=pos)
             prev_ids = torch.cat([prev_ids, pred_ids], dim=1)
             states["noise"].normal_(generator=generator)
-            sample = self.denoise(z, states["noise"], guidance_scaler, generator, pred_ids)
+            sample = self.denoise(z, states["noise"], guidance_scaler.clone(), generator, pred_ids)
             x.add_(self.image_encoder.patch_embed.unpatchify(sample.mul_(pred_mask)))
 
     @torch.inference_mode()
