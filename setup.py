@@ -111,8 +111,9 @@ setuptools.setup(
         "diffusers",
         "transformers",
         "accelerate",
-        "imageio[ffmpeg]",
-        "pyyaml",
+        "imageio-ffmpeg",
+        "omegaconf",
+        "wandb",
         "scipy",
     ],
     classifiers=[

@@ -23,10 +23,8 @@ import queue
 
 import codewithgpu
 import numpy as np
-import torch
 
-from diffnext.config import cfg
-from diffnext.utils import logging
+from diffnext.data.flex_pipelines import FeatureWorker
 
 
 class BalancedQueues(object):
@@ -57,41 +55,18 @@ class BalancedQueues(object):
         return outputs
 
 
-class DatasetReader(codewithgpu.DatasetReader):
-    """Enhanced dataset reader to apply update."""
-
-    def before_first(self):
-        """Move the cursor before begin."""
-        self._current = self._first
-        self._dataset.seek(self._first)
-        self._path2 = self._kwargs.get("path2", "")
-        if self._path2 and not hasattr(self, "_dataset2"):
-            self._dataset2 = self._dataset_getter(path=self._path2)
-        self._dataset2.seek(self._first) if self._path2 else None
-
-    def next_example(self):
-        """Return the next example."""
-        example = super(DatasetReader, self).next_example()
-        example.update(self._dataset2.read()) if self._path2 else None
-        return example
-
-
 class DataLoaderBase(threading.Thread):
     """Base class of data loader."""
 
     def __init__(self, worker, **kwargs):
-        super(DataLoaderBase, self).__init__(daemon=True)
-        self.batch_size = kwargs.get("batch_size", 2)
-        self.num_readers = kwargs.get("num_readers", 1)
-        self.num_workers = kwargs.get("num_workers", 3)
+        super().__init__(daemon=True)
+        self.seed = kwargs.pop("seed", 1337)
+        self.shuffle = kwargs.pop("shuffle", True)
+        self.shard_id = kwargs.get("shard_id", 0)
+        self.num_shards = kwargs.get("num_shards", 1)
+        self.batch_size = kwargs.get("batch_size", 1)
+        self.num_workers = kwargs.get("num_workers", 1)
         self.queue_depth = kwargs.get("queue_depth", 2)
-        # Initialize distributed group.
-        from diffnext.engine import get_ddp_group
-
-        rank, dist_size, dist_group = 0, 1, get_ddp_group()
-        if dist_group is not None:
-            rank = torch.distributed.get_rank(dist_group)
-            dist_size = torch.distributed.get_world_size(dist_group)
         # Build queues.
         self.reader_queue = mp.Queue(self.queue_depth * self.batch_size)
         self.worker_queue = mp.Queue(self.queue_depth * self.batch_size)
@@ -99,28 +74,23 @@ class DataLoaderBase(threading.Thread):
         self.reader_queue = BalancedQueues(self.reader_queue, self.num_workers)
         self.worker_queue = BalancedQueues(self.worker_queue, self.num_workers)
         # Build readers.
-        self.readers = []
-        for i in range(self.num_readers):
-            partition_id = i
-            num_partitions = self.num_readers
-            num_partitions *= dist_size
-            partition_id += rank * self.num_readers
-            self.readers.append(
-                DatasetReader(
-                    output_queue=self.reader_queue,
-                    partition_id=partition_id,
-                    num_partitions=num_partitions,
-                    seed=cfg.RNG_SEED + partition_id,
-                    **kwargs,
-                )
+        self.readers = [
+            codewithgpu.DatasetReader(
+                output_queue=self.reader_queue,
+                partition_id=self.shard_id,
+                num_partitions=self.num_shards,
+                seed=self.seed + self.shard_id,
+                shuffle=self.shuffle,
+                **kwargs,
             )
-            self.readers[i].start()
-            time.sleep(0.1)
+        ]
+        self.readers[0].start()
+        time.sleep(0.1)
         # Build workers.
         self.workers = []
         for i in range(self.num_workers):
             p = worker()
-            p.seed += i + rank * self.num_workers
+            p.seed = self.seed + i + self.shard_id * self.num_workers
             p.reader_queue = self.reader_queue.queues[i]
             p.worker_queue = self.worker_queue.queues[i]
             p.start()
@@ -166,23 +136,21 @@ class DataLoader(DataLoaderBase):
     """Loader to return the batch of data."""
 
     def __init__(self, dataset, worker, **kwargs):
-        base_args = {"path": dataset, "path2": kwargs.get("dataset2", None)}
-        self.contiguous = kwargs.get("contiguous", True)
-        self.prefetch_count = kwargs.get("prefetch_count", 50)
-        base_args["shuffle"] = kwargs.get("shuffle", True)
-        base_args["batch_size"] = kwargs.get("batch_size", 1)
-        base_args["num_workers"] = kwargs.get("num_workers", 1)
-        super(DataLoader, self).__init__(worker, **base_args)
+        kwargs.update({"path": dataset})  # Alias for codewithgpu.
+        self.contiguous = kwargs.pop("contiguous", True)
+        self.prefetch_count = kwargs.pop("prefetch_count", 50)
+        super().__init__(worker, **kwargs)
 
     def run(self):
         """Main loop."""
-        logging.info("Prefetch batches...")
-        next_inputs = []
         prev_inputs = self.worker_queue.get_n(self.prefetch_count * self.batch_size)
+        next_inputs = []
         while True:
-            # Collect the next batch.
+            # Use cached buffer for next N inputs.
             if len(next_inputs) == 0:
-                next_inputs, prev_inputs = prev_inputs, []
+                next_inputs = prev_inputs
+                prev_inputs = []
+            # Collect the next batch.
             outputs = collections.defaultdict(list)
             for _ in range(self.batch_size):
                 inputs = next_inputs.pop(0)
@@ -191,6 +159,14 @@ class DataLoader(DataLoaderBase):
                 prev_inputs += self.worker_queue.get_n(1)
             # Stack batch data.
             if self.contiguous:
-                outputs["moments"] = np.stack(outputs["moments"])
+                if "latents" in outputs:
+                    outputs["latents"] = np.stack(outputs["latents"])
             # Send batch data to consumer.
             self.batch_queue.put(outputs)
+
+
+class FeatureDataLoader(DataLoader):
+    """Loader to return the batch of data features."""
+
+    def __init__(self, dataset, **kwargs):
+        super().__init__(dataset, FeatureWorker, **kwargs)

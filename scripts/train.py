@@ -15,74 +15,91 @@
 # ------------------------------------------------------------------------
 """Train a diffnext model."""
 
-import argparse
+import json
 import os
-import sys
-import subprocess
 
-from diffnext import engine
-from diffnext.config import cfg
-from diffnext.data import get_dataset_size
-from diffnext.utils import logging
+from diffnext.engine.train_engine import Trainer
+from diffnext.engine.train_engine import engine_utils
+from diffnext.utils import accelerate_utils
+from diffnext.utils import omegaconf_utils
 
 
-def parse_args():
-    """Parse arguments."""
-    parser = argparse.ArgumentParser(description="Train a diffnext model")
-    parser.add_argument("--cfg", default=None, help="config file")
-    parser.add_argument("--exp-dir", default=None, help="experiment dir")
-    parser.add_argument("--tensorboard", action="store_true", help="write metrics to tensorboard")
-    parser.add_argument("--distributed", action="store_true", help="spawn distributed processes")
-    parser.add_argument("--host", default="", help="hostfile for distributed training")
-    parser.add_argument("--deepspeed", type=str, default="", help="deepspeed config file")
-    return parser.parse_args()
+def prepare_checkpoints(config):
+    """Prepare checkpoints for model resuming.
+
+    Args:
+        config (omegaconf.DictConfig)
+            The model config.
+    """
+    config.experiment.setdefault("resume_from_checkpoint", "")
+    ckpt_dir = os.path.abspath(os.path.join(config.experiment.output_dir, "checkpoints"))
+    resume_iter, _ = 0, os.makedirs(ckpt_dir, exist_ok=True)
+    if config.experiment.resume_from_checkpoint == "latest":
+        ckpts = [_ for _ in os.listdir(ckpt_dir) if _.startswith("checkpoint-")]
+        if ckpts:
+            resume_iter, ckpt = sorted((int(_.split("-")[-1]), _) for _ in ckpts)[-1]
+            config.experiment.resume_from_checkpoint = os.path.join(ckpt_dir, ckpt)
+    elif config.experiment.resume_from_checkpoint:
+        resume_iter = int(os.path.split(config.experiment.resume_from_checkpoint).split("-")[-1])
+    config.experiment.resume_iter = resume_iter
 
 
-def spawn_processes(args, coordinator):
-    """Spawn distributed processes."""
-    if args.deepspeed:
-        cmd = "deepspeed --no_local_rank "
-        cmd += '-H {} --launcher_args="-N" '.format(args.host) if args.host else ""
-        cmd += "--num_gpus {} ".format(cfg.NUM_GPUS) if not args.host else ""
+def prepare_datasets(config, accelerator):
+    """Prepare datasets for model training.
+
+    Args:
+        config (omegaconf.DictConfig)
+            The model config.
+        accelerator (accelerate.Accelerator)
+            The accelerator instance.
+    """
+    dataset = config.train_dataloader.params.dataset
+    if os.path.exists(os.path.join(dataset, "METADATA")):
+        with open(os.path.join(dataset, "METADATA"), "r") as f:
+            max_examples = json.load(f)["entries"]
     else:
-        cmd = "torchrun --nproc_per_node {} ".format(cfg.NUM_GPUS)
-    cmd += "{} --distributed".format(os.path.abspath(__file__))
-    cmd += " --cfg {}".format(os.path.abspath(args.cfg))
-    cmd += " --exp-dir {}".format(coordinator.exp_dir)
-    cmd += " --tensorboard" if args.tensorboard else ""
-    cmd += " --deepspeed {}".format(args.deepspeed) if args.deepspeed else ""
-    return subprocess.call(cmd, shell=True), sys.exit()
+        raise ValueError("Unsupported dataset: " + dataset)
+    config.train_dataloader.params.max_examples = max_examples
+    if "shard_id" not in config.train_dataloader.params:
+        # By default, we use dataset shards across all processes.
+        config.train_dataloader.params.update(accelerate_utils.get_ddp_shards(accelerator))
 
 
-def main(args):
+def run_train(config, accelerator, logger):
+    """Start a model training task.
+
+    Args:
+        config (omegaconf.DictConfig)
+            The model config.
+        accelerator (accelerate.Accelerator)
+            The accelerator instance.
+        logger (logging.Logger)
+            The logger instance.
+    """
+    trainer = Trainer(config, accelerator, logger)
+    logger.info("#Params: %.2fM" % engine_utils.count_params(trainer.model))
+    logger.info("Start training...")
+    trainer.train_loop()
+    trainer.ema.update(trainer.model) if trainer.ema else None
+    trainer.save()
+
+
+def main():
     """Main entry point."""
-    logging.info("Called with args:\n" + str(args))
-    coordinator = engine.Coordinator(args.cfg, args.exp_dir)
-    checkpoint, start_iter = coordinator.get_checkpoint()
-    cfg.MODEL.WEIGHTS = checkpoint or cfg.MODEL.WEIGHTS
-    logging.info("Using config:\n" + str(cfg))
-    spawn_processes(args, coordinator) if cfg.NUM_GPUS > 1 else None
-    engine.manual_seed(cfg.RNG_SEED, (cfg.GPU_ID, cfg.RNG_SEED))
-    dataset_size = get_dataset_size(cfg.TRAIN.DATASET)
-    logging.info("Dataset({}): {} examples for training.".format(cfg.TRAIN.DATASET, dataset_size))
-    logging.info("Checkpoints will be saved to `{:s}`".format(coordinator.path_at("checkpoints")))
-    engine.run_train(coordinator, start_iter, enable_tensorboard=args.tensorboard)
-
-
-def main_distributed(args):
-    """Main distributed entry point."""
-    coordinator = engine.Coordinator(args.cfg, exp_dir=args.exp_dir)
-    coordinator.deepspeed = args.deepspeed
-    checkpoint, start_iter = coordinator.get_checkpoint()
-    cfg.MODEL.WEIGHTS = checkpoint or cfg.MODEL.WEIGHTS
-    engine.create_ddp_group(cfg)
-    engine.manual_seed(cfg.RNG_SEED, (cfg.GPU_ID, cfg.RNG_SEED + engine.get_ddp_rank()))
-    dataset_size = get_dataset_size(cfg.TRAIN.DATASET)
-    logging.info("Dataset({}): {} examples for training.".format(cfg.TRAIN.DATASET, dataset_size))
-    logging.info("Checkpoints will be saved to `{:s}`".format(coordinator.path_at("checkpoints")))
-    engine.run_train(coordinator, start_iter, enable_tensorboard=args.tensorboard)
+    config = omegaconf_utils.get_config()
+    accelerator = accelerate_utils.build_accelerator(config, log_with="wandb")
+    accelerate_utils.build_wandb(config, accelerator=accelerator)
+    logger = accelerate_utils.set_logger(config.experiment.output_dir, accelerator=accelerator)
+    device_seed = config.training.seed + accelerator.process_index
+    config.training.gpu_id, config.training.seed = accelerator.device.index, device_seed
+    engine_utils.manual_seed(config.training.seed, (config.training.gpu_id, device_seed))
+    prepare_checkpoints(config), prepare_datasets(config, accelerator)
+    logger.info(f"Config:\n{omegaconf_utils.config_to_yaml(config)}")
+    if accelerator.is_main_process:
+        config_path = os.path.join(config.experiment.output_dir, "config.yaml")
+        omegaconf_utils.save_config(config, config_path)
+    run_train(config, accelerator, logger)
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main_distributed(args) if args.distributed else main(args)
+    main()

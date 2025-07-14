@@ -14,17 +14,14 @@
 ##############################################################################
 """Non-quantized autoregressive pipeline for NOVA."""
 
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 import numpy as np
 import torch
 
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-
 from diffnext.image_processor import VaeImageProcessor
-from diffnext.pipelines.builder import PIPELINES
 from diffnext.pipelines.nova.pipeline_utils import NOVAPipelineOutput, PipelineMixin
 
 
-@PIPELINES.register("nova_c2i")
 class NOVAC2IPipeline(DiffusionPipeline, PipelineMixin):
     """NOVA autoregressive diffusion pipeline."""
 

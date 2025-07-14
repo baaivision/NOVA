@@ -28,7 +28,9 @@ x = torch.as_tensor(np.array(img)[None, ...].transpose(0, 3, 1, 2)).to(device).t
 with torch.no_grad():
     x = vae.encode(x.sub(127.5).div(127.5)).latent_dist.parameters.cpu().numpy()[0]
 example = {"caption": "long caption", "text": "short text"}
-writer.write({"shape": x.shape, "moments": x.tobytes(), **example}), writer.close()
+# Ensure enough examples for codewithgou distributed dataset.
+[writer.write({"shape": x.shape, "moments": x.tobytes(), **example}) for _ in range(16)]
+writer.close()
 ```
 
 ## Build T2V cache
@@ -58,7 +60,8 @@ x = torch.as_tensor(vid[None, ...].transpose((0, 4, 1, 2, 3))).to(device).to(dty
 with torch.no_grad():
     x = vae.encode(x.sub(127.5).div(127.5)).latent_dist.parameters.cpu().numpy()[0]
 example = {"caption": "long caption", "text": "short text", "flow": 5}
-writer.write({"shape": x.shape, "moments": x.tobytes(), **example}), writer.close()
+[writer.write({"shape": x.shape, "moments": x.tobytes(), **example}) for _ in range(16)]
+writer.close()
 ```
 
 # 2. Train models
@@ -66,49 +69,28 @@ writer.write({"shape": x.shape, "moments": x.tobytes(), **example}), writer.clos
 ## Train T2I model
 Following snippet provides simple T2I training arguments:
 
-```python
-from diffnext.config import cfg
-cfg.PIPELINE.TYPE = "nova_train_t2i"
-cfg.MODEL.WEIGHTS = "/path/to/nova-d48w1024-sdxl1024"
-cfg.TRAIN.DATASET = "./img_dataset"
-cfg.SOLVER.BASE_LR, cfg.SOLVER.MAX_STEPS = 1e-4, 100
-open("./nova_d48w1024_1024px.yml", "w").write(str(cfg))
-```
 ```bash
-python scripts/train.py --cfg ./nova_d48w1024_1024px.yml
+accelerate launch --config_file accelerate_configs/1_gpus_zero2.yaml \
+  scripts/train.py \
+  config="./configs/nova_d48w768_sdxl1024.yaml" \
+  pipeline.paths.pretrained_path="/path/to/nova-d48w768-sdxl1024" \
+  experiment.output_dir="./experiments/nova_d48w768_sdxl1024" \
+  train_dataloader.params.dataset="./img_dataset" \
+  model.gradient_checkpointing=3 \
+  training.batch_size=1
 ```
 
 ## Train T2V model
 Following snippet provides simple T2V training arguments:
 
-```python
-from diffnext.config import cfg
-cfg.PIPELINE.TYPE = "nova_train_t2v"
-cfg.MODEL.WEIGHTS = "/path/to/nova-d48w1024-osp480"
-cfg.TRAIN.DATASET = "./vid_dataset"
-cfg.SOLVER.BASE_LR, cfg.SOLVER.MAX_STEPS = 1e-4, 100
-open("./nova_d48w1024_480px.yml", "w").write(str(cfg))
-```
 ```bash
-python scripts/train.py --cfg ./nova_d48w1024_480px.yml
+accelerate launch --config_file accelerate_configs/8_gpus_zero2.yaml \
+  scripts/train.py \
+  config="./configs/nova_d48w1024_osp480.yaml" \
+  pipeline.paths.pretrained_path="/path/to/nova-d48w1024-osp480" \
+  experiment.output_dir="./experiments/nova_d48w1024_osp480" \
+  train_dataloader.params.dataset="./vid_dataset" \
+  model.gradient_checkpointing=3 \
+  training.batch_size=1
 ```
-
-## Train DeepSpeed model
-```bash
-python scripts/train.py --cfg ./nova_d48w1024_1024px.yml --deepspeed ./configs/deepspeed/zero2_bf16.json
-```
-
-This script launches multi-nodes job using *hostfile*.
-
-Argument usage: 
-```bash
-python scripts/train.py --host /path/to/my_hostfile
-```
-
-Requirements:
-
-- The total number of slots accumulated in the *hostfile* should be equal to ``cfg.NUM_GPUS``.
-- The launcher machine must be able to SSH to all host machines with *passwordless login*.
-
-See [DeepSpeed's Doc](https://www.deepspeed.ai/getting-started/#resource-configuration-multi-node) for the hostfile details.
 

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ------------------------------------------------------------------------
-"""Custom deepspeed trainer focused on data parallelism specialization."""
+"""Custom trainer focused on data parallelism specialization."""
 
 import collections
 import os
@@ -21,166 +21,155 @@ import shutil
 
 import torch
 
-from diffnext import engine
-from diffnext.config import cfg
-from diffnext.data.builder import build_loader_train
-from diffnext.pipelines.builder import build_pipeline, get_pipeline_path
-from diffnext.utils import logging
+from diffnext.engine import engine_utils
+from diffnext.engine.model_ema import ModelEMA
+from diffnext.pipelines.builder import build_pipeline
+from diffnext.pipelines.builder import get_pipeline_path
+from diffnext.utils import accelerate_utils
 from diffnext.utils import profiler
+from diffnext.utils.omegaconf_utils import config_to_class
+from diffnext.utils.omegaconf_utils import config_to_object
 
 
 class Trainer(object):
     """Schedule the iterative model training."""
 
-    def __init__(self, coordinator, start_iter=0):
-        self.coordinator = coordinator
-        self.loader = build_loader_train()
-        self.precision = cfg.MODEL.PRECISION.lower()
-        self.dtype = getattr(torch, self.precision)
-        self.device_type = engine.get_device(0).type
-        pipe_conf = {cfg.MODEL.TYPE: cfg.MODEL.CONFIG} if cfg.MODEL.CONFIG else None
-        pipe_path = get_pipeline_path(cfg.MODEL.WEIGHTS, cfg.PIPELINE.MODULES or None, pipe_conf)
-        self.pipe = build_pipeline(pipe_path, config=cfg)
-        self.pipe = self.pipe.to(device=engine.get_device(cfg.GPU_ID))
-        self.ema_model = engine.build_model_ema(self.pipe.model, cfg.TRAIN.MODEL_EMA)
-        self.ema_model.ema.cpu() if cfg.TRAIN.DEVICE_EMA.lower() == "cpu" else None
-        self.model = self.pipe.configure_model(config=cfg)
-        self.autocast = torch.autocast(self.device_type, self.dtype)
-        param_groups = engine.get_param_groups(self.model)
-        self.optimizer = engine.build_optimizer(param_groups)
-        self.loss_scaler = torch.amp.GradScaler("cuda", enabled=self.precision == "float16")
-        self.ds_model = engine.apply_deepspeed(self.model, self.optimizer, coordinator.deepspeed)
-        self.ddp_model = engine.apply_ddp(self.model.float()) if self.ds_model is None else None
-        self.scheduler = engine.build_lr_scheduler()
-        self.metrics, self.board = collections.OrderedDict(), None
-        if self.ema_model and start_iter > 0:
-            ema_weights = cfg.MODEL.WEIGHTS.replace("checkpoints", "ema_checkpoints")
-            ema_weights += "/%s/diffusion_pytorch_model.bin" % cfg.MODEL.TYPE
-            engine.load_weights(self.ema_model.ema, ema_weights)
+    def __init__(self, config, accelerator, logger):
+        """Create a trainer instance."""
+        self.config, self.accelerator, self.logger = config, accelerator, logger
+        self.dtype = accelerate_utils.precision_to_dtype(config.training.mixed_precision)
+        self.train_dataloader = config_to_object(config.train_dataloader)
+        self.pipe_path = get_pipeline_path(**config.pipeline.paths)
+        self.pipe = build_pipeline(self.pipe_path, config_to_class(config.pipeline), self.dtype)
+        self.pipe = self.pipe.to(device=engine_utils.get_device(config.training.gpu_id))
+        self.ema = ModelEMA(self.pipe.model, **config.ema.params) if "ema" in config else None
+        self.model = self.pipe.configure_model(config)
+        param_groups = engine_utils.get_param_groups(self.model)
+        self.optimizer = config_to_object(config.optimizer, params=param_groups)
+        self.scheduler = config_to_object(config.lr_scheduler)
+        self.model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
+        self.metrics = collections.OrderedDict()
+        if self.ema and config.experiment.resume_iter > 0:
+            ckpt = config.experiment.resume_from_checkpoint
+            ema_ckpt = ckpt.replace("checkpoints", "ema_checkpoints")
+            ema_weights = os.path.join(ema_ckpt, config.model.name, "diffusion_pytorch_model.bin")
+            engine_utils.load_weights(self.ema.model, ema_weights)
 
     @property
-    def iter(self):
+    def global_step(self) -> int:
+        """Return the global iteration step.
+
+        Returns:
+            int: The global step.
+        """
         return self.scheduler._step_count
 
-    def snapshot(self):
+    def save(self):
         """Save the checkpoint of current iterative step."""
-        f = cfg.SOLVER.SNAPSHOT_PREFIX + "_iter_{}/{}".format(self.iter, cfg.MODEL.TYPE)
-        f = os.path.join(self.coordinator.path_at("checkpoints"), f)
-        if logging.is_root() and not os.path.exists(f):
+        f = "checkpoint-{}/{}".format(self.global_step, self.config.model.name)
+        f = os.path.join(self.config.experiment.output_dir, "checkpoints", f)
+        if self.accelerator.is_main_process and not os.path.exists(f):
             self.model.save_pretrained(f, safe_serialization=False)
-            logging.info("Wrote snapshot to: {:s}".format(f))
-            if self.ema_model is not None:
+            self.logger.info("Wrote snapshot to: {:s}".format(f))
+            if self.ema is not None:
                 config_json = os.path.join(f, "config.json")
                 f = f.replace("checkpoints", "ema_checkpoints")
                 os.makedirs(f), shutil.copy(config_json, os.path.join(f, "config.json"))
                 f = os.path.join(f, "diffusion_pytorch_model.bin")
-                torch.save(self.ema_model.ema.state_dict(), f)
+                torch.save(self.ema.model.state_dict(), f)
 
     def add_metrics(self, stats):
-        """Add or update the metrics."""
+        """Add or update the metrics.
+
+        Args:
+            stats (Dict)
+                The current iteration stats.
+        """
         for k, v in stats["metrics"].items():
             if k not in self.metrics:
                 self.metrics[k] = profiler.SmoothedValue()
             self.metrics[k].update(v)
 
-    def display_metrics(self, stats):
-        """Send metrics to the monitor."""
+    def log_metrics(self, stats):
+        """Send metrics to available trackers.
+
+        Args:
+            stats (Dict)
+                The current iteration stats.
+        """
         iter_template = "Iteration %d, lr = %.8f, time = %.2fs"
         metric_template = " " * 4 + "Train net output({}): {:.4f} ({:.4f})"
-        logging.info(iter_template % (stats["iter"], stats["lr"], stats["time"]))
+        self.logger.info(iter_template % (stats["step"], stats["lr"], stats["time"]))
         for k, v in self.metrics.items():
-            logging.info(metric_template.format(k, stats["metrics"][k], v.average()))
-        if self.board is not None:
-            self.board.scalar_summary("lr", stats["lr"], stats["iter"])
-            self.board.scalar_summary("time", stats["time"], stats["iter"])
-            for k, v in self.metrics.items():
-                self.board.scalar_summary(k, v.average(), stats["iter"])
+            self.logger.info(metric_template.format(k, stats["metrics"][k], v.average()))
+        tracker_logs = dict((k, stats["metrics"][k]) for k in self.metrics.keys())
+        tracker_logs.update({"lr": stats["lr"], "time": stats["time"]})
+        self.accelerator.log(tracker_logs, step=stats["step"])
+        self.metrics.clear()
 
-    def step_ddp(self, metrics, accum_steps=1):
-        """Single DDP optimization step."""
-        self.optimizer.zero_grad()
+    def run_model(self, metrics, accum_steps=1):
+        """Run multiple model steps.
+
+        Args:
+            metrics (Dict)
+                The current iteration metrics.
+            accum_step (int)
+                The gradient accumulation steps.
+        """
         for _ in range(accum_steps):
-            inputs, _ = self.loader.next()[0], self.autocast.__enter__()
-            outputs, losses, _ = self.ddp_model(inputs), [], self.autocast.__exit__(0, 0, 0)
+            inputs = self.train_dataloader.next()[0]
+            outputs, losses = self.model(inputs), []
             for k, v in outputs.items():
-                if "loss" not in k:
+                if "loss" not in k and "metric" not in k:
                     continue
                 if isinstance(v, torch.Tensor) and v.requires_grad:
                     losses.append(v)
-                metrics[k] += float(v) / accum_steps
+                metrics[k] += float(self.accelerator.gather(v).mean()) / accum_steps
             losses = sum(losses[1:], losses[0])
-            losses = losses.mul_(1.0 / accum_steps) if accum_steps > 1 else losses
-            self.loss_scaler.scale(losses).backward()
-        if self.loss_scaler.is_enabled():
-            metrics["~loss_scale"] += self.loss_scaler.get_scale()
-        self.loss_scaler.step(self.optimizer)
-        self.loss_scaler.update()
+            self.accelerator.accumulate().__enter__()
+            self.accelerator.backward(losses)
 
-    def step_ds(self, metrics, accum_steps=1):
-        """Single DeepSpeed optimization step."""
-        for _ in range(accum_steps):
-            inputs = self.loader.next()[0]
-            outputs, losses = self.ds_model(inputs), []
-            for k, v in outputs.items():
-                if "loss" not in k:
-                    continue
-                if isinstance(v, torch.Tensor) and v.requires_grad:
-                    losses.append(v)
-                metrics[k] += float(v) / accum_steps
-            losses = sum(losses[1:], losses[0])
-            losses = losses.mul_(1.0 / accum_steps) if accum_steps > 1 else losses
-            self.ds_model.backward(losses)
-        if self.loss_scaler.is_enabled():
-            metrics["~loss_scale"] += float(self.ds_model.optimizer._get_loss_scale())
-        self.ds_model.step()
+    def run_step(self, accum_steps=1) -> dict:
+        """Run single iteration step.
 
-    def step(self, accum_steps=1):
-        """Single model optimization step."""
-        stats = {"iter": self.iter}
+        Args:
+            accum_step (int)
+                The gradient accumulation steps.
+
+        Returns:
+            Dict: The current iteration stats.
+        """
+        stats = {"step": self.global_step}
         metrics = collections.defaultdict(float)
         timer = profiler.Timer().tic()
         stats["lr"] = self.scheduler.get_lr()
         for group in self.optimizer.param_groups:
             group["lr"] = stats["lr"] * group.get("lr_scale", 1.0)
-        self.step_ds(metrics, accum_steps) if self.ds_model else None
-        self.step_ddp(metrics, accum_steps) if self.ddp_model else None
+        self.run_model(metrics, accum_steps)
+        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
         self.scheduler.step()
         stats["time"] = timer.toc()
         stats["metrics"] = collections.OrderedDict(sorted(metrics.items()))
         return stats
 
-    def train_model(self, start_iter=0):
+    def train_loop(self):
         """Training loop."""
         timer = profiler.Timer()
-        max_steps = cfg.SOLVER.MAX_STEPS
-        accum_steps = cfg.SOLVER.ACCUM_STEPS
-        display_every = cfg.SOLVER.DISPLAY
-        progress_every = 10 * display_every
-        ema_every = cfg.SOLVER.EMA_EVERY
-        snapshot_every = cfg.SOLVER.SNAPSHOT_EVERY
-        self.scheduler._step_count = start_iter
-        while self.iter < max_steps:
+        max_steps = self.config.training.max_train_steps
+        accum_steps = self.config.training.gradient_accumulation_steps
+        log_every = self.config.experiment.log_every
+        save_every = self.config.experiment.save_every
+        self.scheduler._step_count = self.config.experiment.get("resume_iter", 0)
+        while self.global_step < max_steps:
             with timer.tic_and_toc():
-                stats = self.step(accum_steps)
+                stats = self.run_step(accum_steps)
             self.add_metrics(stats)
-            if stats["iter"] % display_every == 0:
-                self.display_metrics(stats)
-            if self.iter % progress_every == 0:
-                logging.info(profiler.get_progress(timer, self.iter, max_steps))
-            if self.iter % ema_every == 0 and self.ema_model:
-                self.ema_model.update(self.model)
-            if self.iter % snapshot_every == 0:
-                self.snapshot()
-                self.metrics.clear()
-
-
-def run_train(coordinator, start_iter=0, enable_tensorboard=False):
-    """Start a model training task."""
-    trainer = Trainer(coordinator, start_iter=start_iter)
-    if enable_tensorboard and logging.is_root():
-        trainer.board = engine.build_tensorboard(coordinator.path_at("logs"))
-    logging.info("#Params: %.2fM" % engine.count_params(trainer.model))
-    logging.info("Start training...")
-    trainer.train_model(start_iter)
-    trainer.ema_model.update(trainer.model) if trainer.ema_model else None
-    trainer.snapshot()
+            if stats["step"] % log_every == 0:
+                self.log_metrics(stats)
+            if self.global_step % (10 * log_every) == 0:
+                self.logger.info(profiler.get_progress(timer, self.global_step, max_steps))
+            if self.ema and self.global_step % self.ema.update_every == 0:
+                self.ema.update(self.model)
+            if self.global_step % save_every == 0:
+                self.save()

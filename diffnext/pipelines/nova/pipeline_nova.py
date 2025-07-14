@@ -16,17 +16,14 @@
 
 from typing import List
 
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 import numpy as np
 import torch
 
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-
 from diffnext.image_processor import VaeImageProcessor
-from diffnext.pipelines.builder import PIPELINES
 from diffnext.pipelines.nova.pipeline_utils import NOVAPipelineOutput, PipelineMixin
 
 
-@PIPELINES.register("nova")
 class NOVAPipeline(DiffusionPipeline, PipelineMixin):
     """NOVA autoregressive diffusion pipeline."""
 
@@ -49,8 +46,9 @@ class NOVAPipeline(DiffusionPipeline, PipelineMixin):
         self.transformer = self.register_module(transformer, "transformer")
         self.scheduler = self.register_module(scheduler, "scheduler")
         self.transformer.sample_scheduler, self.guidance_scale = self.scheduler, 5.0
-        self.tokenizer_max_length = self.transformer.text_embed.num_tokens
-        self.transformer.text_embed.encoders = [self.tokenizer, self.text_encoder]
+        if self.transformer.text_embed:
+            self.tokenizer_max_length = self.transformer.text_embed.num_tokens
+            self.transformer.text_embed.encoders = [self.tokenizer, self.text_encoder]
         self.image_processor = VaeImageProcessor()
 
     @torch.no_grad()

@@ -25,9 +25,8 @@ class ConstantLR(object):
         self._lr_max = kwargs.pop("lr_max")
         self._lr_min = kwargs.pop("lr_min", 0)
         self._warmup_steps = kwargs.pop("warmup_steps", 0)
-        self._warmup_factor = kwargs.pop("warmup_factor", 0)
-        self._step_count = 0
-        self._last_decay = 1.0
+        self._warmup_factor = kwargs.pop("warmup_factor", 0.001)
+        self._step_count, self._last_decay = 0, 1.0
 
     def step(self):
         self._step_count += 1
@@ -46,9 +45,8 @@ class CosineLR(ConstantLR):
     """LR scheduler with cosine decay."""
 
     def __init__(self, lr_max, max_steps, lr_min=0, decay_step=1, **kwargs):
-        super(CosineLR, self).__init__(lr_max=lr_max, lr_min=lr_min, **kwargs)
-        self._decay_step = decay_step
-        self._max_steps = max_steps
+        super().__init__(lr_max=lr_max, lr_min=lr_min, **kwargs)
+        self._decay_step, self._max_steps = decay_step, max_steps
 
     def get_decay(self):
         t = self._step_count - self._warmup_steps
@@ -62,11 +60,9 @@ class MultiStepLR(ConstantLR):
     """LR scheduler with multi-steps decay."""
 
     def __init__(self, lr_max, decay_steps, decay_gamma, **kwargs):
-        super(MultiStepLR, self).__init__(lr_max=lr_max, **kwargs)
-        self._decay_steps = decay_steps
-        self._decay_gamma = decay_gamma
-        self._stage_count = 0
-        self._num_stages = len(decay_steps)
+        super().__init__(lr_max=lr_max, **kwargs)
+        self._decay_steps, self._decay_gamma = decay_steps, decay_gamma
+        self._stage_count, self._num_stages = 0, len(decay_steps)
 
     def get_decay(self):
         if self._stage_count < self._num_stages:

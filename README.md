@@ -20,6 +20,7 @@
 We present **NOVA** (**NO**n-Quantized **V**ideo **A**utoregressive Model), a model that enables autoregressive image/video generation with high efficiency. **NOVA** reformulates the video generation problem as non-quantized autoregressive modeling of temporal *frame-by-frame* prediction and spatial *set-by-set* prediction. **NOVA** generalizes well and enables diverse zero-shot generation abilities in one unified model.
 
 ## 🚀News
+- ```[Jul 2025]``` Codebase refactor with **Accelerate**, **OmegaConf** and **Wandb**.
 - ```[Feb 2025]``` Released [Evaluation Guide](./docs/evaluation.md).
 - ```[Feb 2025]``` Released [Training Guide](./docs/training.md)
 - ```[Jan 2025]``` Accepted by ICLR 2025. [[OpenReview]](https://openreview.net/forum?id=JE9tCwe3lp) & [[Poster]](https://iclr.cc/virtual/2025/poster/30117).
@@ -74,7 +75,7 @@ We present **NOVA** (**NO**n-Quantized **V**ideo **A**utoregressive Model), a mo
 Clone this repository to local disk and install:
 
 ```bash
-pip install diffusers transformers accelerate imageio[ffmpeg]
+pip install diffusers transformers accelerate imageio-ffmpeg omegaconf wandb
 git clone https://github.com/baaivision/NOVA.git
 cd NOVA && pip install .
 ```
@@ -85,7 +86,7 @@ cd NOVA && pip install .
 You can also install from the remote repository **if you have set your Github SSH key**: 
 
 ```bash
-pip install diffusers transformers accelerate imageio[ffmpeg]
+pip install diffusers transformers accelerate imageio-ffmpeg omegaconf wandb
 pip install git+ssh://git@github.com/baaivision/NOVA.git
 ```
 
@@ -225,6 +226,6 @@ If you find this repository useful, please consider giving a star ⭐ and citati
 
 ## Acknowledgement
 
-We thank the repositories: [MAE](https://github.com/facebookresearch/mae), [MAR](https://github.com/LTH14/mar), [MaskGIT](https://github.com/google-research/maskgit), [DiT](https://github.com/facebookresearch/DiT), [Open-Sora-Plan](https://github.com/PKU-YuanGroup/Open-Sora-Plan), [CogVideo](https://github.com/THUDM/CogVideo), [FLUX](https://github.com/black-forest-labs/flux) and [CodeWithGPU](https://github.com/seetacloud/codewithgpu).
+We thank the repositories: [MAE](https://github.com/facebookresearch/mae), [MAR](https://github.com/LTH14/mar), [MaskGIT](https://github.com/google-research/maskgit), [DiT](https://github.com/facebookresearch/DiT), [Open-Sora-Plan](https://github.com/PKU-YuanGroup/Open-Sora-Plan), [CogVideo](https://github.com/THUDM/CogVideo), [FLUX](https://github.com/black-forest-labs/flux), [OpenMuse](https://github.com/huggingface/open-muse) and [CodeWithGPU](https://github.com/seetacloud/codewithgpu).
 ## License
 Code and models are licensed under [Apache License 2.0](LICENSE).

@@ -20,55 +20,44 @@ import multiprocessing
 import cv2
 import numpy.random as npr
 
-from diffnext.config import cfg
 from diffnext.data import flex_transforms
-from diffnext.data.builder import LOADERS
-from diffnext.data.flex_loaders import DataLoader
 
 
 class Worker(multiprocessing.Process):
-    """Data worker."""
+    """Base data worker."""
 
     def __init__(self):
-        super(Worker, self).__init__(daemon=True)
-        self.seed = cfg.RNG_SEED
+        super().__init__(daemon=True)
+        self.seed = 1337
         self.reader_queue = None
         self.worker_queue = None
 
     def run(self):
         """Run implementation."""
-        # Disable opencv threading.
-        cv2.setNumThreads(1)
-        # Fix numpy random seed.
-        npr.seed(self.seed)
-        # Main loop.
-        while True:
-            outputs = self.get_outputs(self.reader_queue.get())
-            self.worker_queue.put(outputs)
+        # Disable opencv threading and fix numpy random seed.
+        cv2.setNumThreads(1), npr.seed(self.seed)
+        while True:  # Main loop.
+            self.worker_queue.put(self.get_outputs(self.reader_queue.get()))
 
 
-class VAETrainPipe(object):
-    """VAE training pipeline."""
+class FeaturePipe(object):
+    """Pipeline to transform data features."""
 
     def __init__(self):
-        super(VAETrainPipe, self).__init__()
-        self.parse_moments = flex_transforms.ParseMoments()
+        super().__init__()
+        self.parse_latents = flex_transforms.ParseLatents()
         self.parse_annotations = flex_transforms.ParseAnnotations()
 
     def get_outputs(self, inputs):
         """Return the outputs."""
-        moments = self.parse_moments(inputs)
+        latents = self.parse_latents(inputs)
         label, caption = self.parse_annotations(inputs)
-        aspect_ratio = float(moments.shape[-2]) / float(moments.shape[-1])
-        outputs = {"moments": [moments], "aspect_ratio": [aspect_ratio]}
+        outputs = {"latents": [latents]}
         outputs.setdefault("prompt", [label]) if label is not None else None
         outputs.setdefault("prompt", [caption]) if caption is not None else None
         outputs.setdefault("motion_flow", [inputs["flow"]]) if "flow" in inputs else None
         return outputs
 
 
-class VAETrainWorker(VAETrainPipe, Worker):
-    """VAE training worker."""
-
-
-LOADERS.register("vae_train", DataLoader, worker=VAETrainWorker)
+class FeatureWorker(FeaturePipe, Worker):
+    """Worker to transform data features."""

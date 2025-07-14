@@ -2,7 +2,8 @@ torch
 diffusers
 transformers
 accelerate
-imageio[ffmpeg]
-pyyaml
+imageio-ffmpeg
+omegaconf
+wandb
 scipy
 codewithgpu

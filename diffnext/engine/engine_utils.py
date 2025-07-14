@@ -22,10 +22,6 @@ import numpy as np
 import torch
 from torch import nn
 
-from diffnext.utils import logging
-
-GLOBAL_DDP_GROUP = None
-
 
 def count_params(module, trainable=True, unit="M"):
     """Return the number of parameters."""
@@ -111,50 +107,3 @@ def synchronize_device(device):
     """Synchronize the computation of device."""
     if device.type in ("cuda", "mps"):
         getattr(torch, device.type).synchronize(device)
-
-
-def create_ddp_group(cfg, ranks=None, devices=None):
-    """Create group for data parallelism."""
-    if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group(backend="nccl")
-    world_rank = torch.distributed.get_rank()
-    ranks = ranks if ranks else [i for i in range(cfg.NUM_GPUS)]
-    logging.set_root(world_rank == ranks[0])
-    devices = devices if devices else [i % 8 for i in range(len(ranks))]
-    cfg.GPU_ID = devices[world_rank]
-    torch.cuda.set_device(cfg.GPU_ID)
-    global GLOBAL_DDP_GROUP
-    GLOBAL_DDP_GROUP = torch.distributed.new_group(ranks)
-    return GLOBAL_DDP_GROUP
-
-
-def get_ddp_group():
-    """Return the process group for data parallelism."""
-    return GLOBAL_DDP_GROUP
-
-
-def get_ddp_rank():
-    """Return the rank in the data parallelism group."""
-    ddp_group = get_ddp_group()
-    if ddp_group is None:
-        return 0
-    return torch.distributed.get_rank(ddp_group)
-
-
-def apply_ddp(model):
-    """Apply distributed data parallelism for given module."""
-    ddp_group = get_ddp_group()
-    if ddp_group is None:
-        return model
-    return nn.parallel.DistributedDataParallel(model, process_group=ddp_group)
-
-
-def apply_deepspeed(model, optimizer, ds_config=None, log_lvl="WARNING"):
-    """Apply deepspeed parallelism for given module."""
-    if not ds_config:
-        return None
-    import deepspeed
-
-    deepspeed.logger.setLevel(log_lvl)
-    ds_model = deepspeed.initialize(None, model, optimizer, config=ds_config)[0]
-    return ds_model

@@ -15,6 +15,4 @@
 # ------------------------------------------------------------------------
 """Pipelines."""
 
-from diffnext.pipelines.builder import build_pipeline
-from diffnext.pipelines.builder import build_diffusion_scheduler
 from diffnext.pipelines.nova import NOVAPipeline

@@ -1,0 +1,65 @@
+wandb:
+  run_id: null
+
+experiment:
+  project: nova_t2i
+  name: nova_d48w768_sdxl1024
+  log_every: 20
+  save_every: 5000
+  resume_from_checkpoint: latest
+
+model:
+  name: "transformer"
+  gradient_checkpointing: 0  # {0, 1, 2, 3}
+  loss_repeat: 4
+  params:
+    image_dim: 4
+    image_size: [1024, 1024]
+    image_stride: 8
+    text_token_dim: 2560
+    text_token_len: 256
+    rotary_pos_embed: false
+    video_base_size: [1, 32, 32]
+    image_base_size: [64, 64]
+    arch: [vit_d16w768, vit_d32w768, mlp_d6w768]
+
+pipeline:
+  target: diffnext.pipelines.nova.pipeline_train_t2i.NOVATrainT2IPipeline
+  paths:
+      pretrained_path: /path/to/nova-d48w768-sdxl1024
+
+optimizer:
+  target: torch.optim.AdamW
+  params:
+    lr: 0.0001
+    betas: [0.9, 0.95]
+    weight_decay: 0.02
+    fused: true
+
+lr_scheduler:
+  target: diffnext.engine.lr_scheduler.ConstantLR
+  params:
+    lr_max: ${optimizer.params.lr}
+    max_steps: ${training.max_train_steps}
+    warmup_steps: 0
+
+train_dataloader:
+  target: diffnext.data.flex_loaders.FeatureDataLoader
+  params:
+    dataset: /path/to/img1024_dataset
+    batch_size: ${training.batch_size}
+    seed: ${training.seed}
+    num_workers: 8
+    shuffle: true
+
+ema:
+  params:
+    decay: 0.98
+    device: "cpu"
+
+training:
+  gradient_accumulation_steps: 1
+  batch_size: 8  # * 128 = 1024
+  max_train_steps: 30000
+  seed: 1337
+  mixed_precision: bf16

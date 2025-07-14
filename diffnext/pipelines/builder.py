@@ -25,9 +25,6 @@ import torch
 
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
-from diffnext.utils.registry import Registry
-
-PIPELINES = Registry("pipelines")
 
 
 def get_pipeline_path(
@@ -50,7 +47,6 @@ def get_pipeline_path(
 
     Returns:
        str: The pipeline loading path.
-
     """
     if module_dict is None and module_config is None:
         return pretrained_path
@@ -89,10 +85,9 @@ def build_diffusion_scheduler(scheduler_path, sample=False, **kwargs) -> Schedul
 
     Returns:
         SchedulerMixin: The diffusion scheduler.
-
     """
+    from diffnext.schedulers.scheduling_cfm import FlowMatchEulerDiscreteScheduler  # noqa
     from diffnext.schedulers.scheduling_ddpm import DDPMScheduler
-    from diffnext.schedulers.scheduling_flow import FlowMatchEulerDiscreteScheduler  # noqa
 
     if isinstance(scheduler_path, str):
         class_key = "_{}_class_name".format("sample" if sample else "noise")
@@ -104,38 +99,26 @@ def build_diffusion_scheduler(scheduler_path, sample=False, **kwargs) -> Schedul
     return None
 
 
-def build_pipeline(
-    pretrained_path,
-    pipe_type=None,
-    precison="float16",
-    config=None,
-    **kwargs,
-) -> DiffusionPipeline:
+def build_pipeline(pretrained_path, pipe_cls, dtype=torch.float16, **kwargs) -> DiffusionPipeline:
     """Create a diffnext pipeline instance.
 
     Examples:
         ```py
-        >>> from diffnext.pipelines import build_pipeline
-        >>> pipe = build_pipeline("BAAI/nova-d48w768-sdxl1024", "nova_train_t2i")
-        ```
+        >>> from diffnext.pipelines import NOVAPipeline
+        >>> from diffnext.pipelines.builder import build_pipeline
+        >>> pipe = build_pipeline("BAAI/nova-d48w768-sdxl1024", NOVAPipeline)
 
     Args:
         pretrained_path (str):
             The model path that includes ``model_index.json`` to create pipeline.
-        pipe_type (str or `type(XXXPipeline)`, *optional*)
-            The registered pipeline class or specific pipeline type.
-        precision (str, *optional*, default to ``float16``)
-            The compute precision used for all pipeline components.
-        cfg (object, *optional*)
-            The config object.
+        pipe_cls (object)
+            The pipeline class object that defines the ``from_pretrained`` method.
+        dtype (torch.dtype, *optional*, default to ``torch.float16``)
+            The compute dtype used for all pipeline components.
 
     Returns:
         DiffusionPipeline: The diffusion pipeline.
-
     """
-    pipe_type = config.PIPELINE.TYPE if config else pipe_type
-    pipe_type = PIPELINES.get(pipe_type).func if isinstance(pipe_type, str) else pipe_type
-    precison = config.MODEL.PRECISION if config else precison
     kwargs.setdefault("trust_remote_code", True)
-    kwargs.setdefault("torch_dtype", getattr(torch, precison.lower()))
-    return pipe_type.from_pretrained(pretrained_path, **kwargs)
+    kwargs.setdefault("torch_dtype", dtype)
+    return pipe_cls.from_pretrained(pretrained_path, **kwargs)

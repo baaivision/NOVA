@@ -16,7 +16,6 @@
 """Flex data transforms."""
 
 import re
-
 import numpy as np
 import numpy.random as npr
 
@@ -29,21 +28,24 @@ class Transform(object):
         return outputs if len(outputs) > 1 else outputs[0]
 
 
-class ParseMoments(Transform):
-    """Parse VAE moments."""
+class ParseLatents(Transform):
+    """Parse VQ or VAE latents."""
 
     def __init__(self):
-        super(ParseMoments, self).__init__()
+        super().__init__()
 
     def __call__(self, inputs):
-        return np.frombuffer(inputs["moments"], "float16").reshape(inputs["shape"])
+        for k, dtype in zip(("moments", "codes"), ("float16", "int32")):
+            if k in inputs:
+                return np.frombuffer(inputs[k], dtype).reshape(inputs["shape"])
+        raise ValueError("Missing latents in inputs.")
 
 
 class ParseAnnotations(Transform):
     """Parse ground-truth annotations."""
 
     def __init__(self, short_prob=0.5):
-        super(ParseAnnotations, self).__init__()
+        super().__init__()
         self.short_prob = short_prob
 
     def __call__(self, inputs):

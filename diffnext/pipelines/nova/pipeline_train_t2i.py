@@ -19,12 +19,11 @@ from typing import Dict
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 import torch
 
-from diffnext import engine
-from diffnext.pipelines.builder import PIPELINES, build_diffusion_scheduler
+from diffnext.engine import engine_utils
+from diffnext.pipelines.builder import build_diffusion_scheduler
 from diffnext.pipelines.nova.pipeline_utils import PipelineMixin
 
 
-@PIPELINES.register("nova_train_t2i")
 class NOVATrainT2IPipeline(DiffusionPipeline, PipelineMixin):
     """Pipeline for training NOVA T2I models."""
 
@@ -53,17 +52,18 @@ class NOVATrainT2IPipeline(DiffusionPipeline, PipelineMixin):
         """Return the trainable model."""
         return self.transformer
 
-    def configure_model(self, loss_repeat=4, checkpointing=0, config=None) -> torch.nn.Module:
+    def configure_model(self, config) -> torch.nn.Module:
         """Configure the trainable model."""
-        self.model.loss_repeat = config.TRAIN.LOSS_REPEAT if config else loss_repeat
-        ckpt_lvl = config.TRAIN.CHECKPOINTING if config else checkpointing
+        ckpt_lvl = config.model.get("gradient_checkpointing", 0)
+        self.model.loss_repeat = config.model.get("loss_repeat", 4)
         [setattr(blk, "mlp_checkpointing", ckpt_lvl) for blk in self.model.video_encoder.blocks]
-        [setattr(blk, "mlp_checkpointing", ckpt_lvl > 1) for blk in self.model.image_encoder.blocks]
+        for blk in self.model.image_encoder.blocks if hasattr(self.model, "image_encoder") else []:
+            setattr(blk, "mlp_checkpointing", ckpt_lvl > 1)
         [setattr(blk, "mlp_checkpointing", ckpt_lvl > 2) for blk in self.model.image_decoder.blocks]
-        engine.freeze_module(self.model.text_embed.norm)  # We always use frozen LN.
-        engine.freeze_module(self.model.video_pos_embed)  # Freeze this module during T2I.
-        engine.freeze_module(self.model.video_encoder.patch_embed)  # Freeze this module during T2I.
-        engine.freeze_module(self.model.motion_embed) if self.model.motion_embed else None
+        engine_utils.freeze_module(self.model.text_embed.norm)  # We always use frozen LN.
+        engine_utils.freeze_module(self.model.video_pos_embed)  # Freeze it during T2I.
+        engine_utils.freeze_module(self.model.video_encoder.patch_embed)  # Freeze it during T2I.
+        engine_utils.freeze_module(self.model.motion_embed) if self.model.motion_embed else None
         self.model.pipeline_preprocess = self.preprocess
         self.model.text_embed.encoders = [self.tokenizer, self.text_encoder]
         return self.model.train()
@@ -72,8 +72,9 @@ class NOVATrainT2IPipeline(DiffusionPipeline, PipelineMixin):
         """Prepare the video latents."""
         if "images" in inputs:
             raise NotImplementedError
-        elif "moments" in inputs:
-            x = torch.as_tensor(inputs.pop("moments"), device=self.device).to(dtype=self.dtype)
+        elif "latents" in inputs:
+            x = torch.as_tensor(inputs.pop("latents"), device=self.device)
+            x = x.to(dtype=self.dtype if x.is_floating_point() else torch.int64)
             inputs["x"] = self.vae.scale_(self.vae.latent_dist(x).sample())
 
     def encode_prompt(self, inputs: Dict):
