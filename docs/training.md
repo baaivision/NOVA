@@ -72,9 +72,9 @@ Following snippet provides simple T2I training arguments:
 ```bash
 accelerate launch --config_file accelerate_configs/1_gpus_zero2.yaml \
   scripts/train.py \
-  config="./configs/nova_d48w768_sdxl1024.yaml" \
-  pipeline.paths.pretrained_path="/path/to/nova-d48w768-sdxl1024" \
-  experiment.output_dir="./experiments/nova_d48w768_sdxl1024" \
+  config="./configs/nova_d48w1024_sdxl1024.yaml" \
+  pipeline.paths.pretrained_path="/path/to/nova-d48w1024-sdxl1024" \
+  experiment.output_dir="./experiments/nova_d48w1024_sdxl1024" \
   train_dataloader.params.dataset="./img_dataset" \
   model.gradient_checkpointing=3 \
   training.batch_size=1
@@ -93,4 +93,3 @@ accelerate launch --config_file accelerate_configs/8_gpus_zero2.yaml \
   model.gradient_checkpointing=3 \
   training.batch_size=1
 ```
-

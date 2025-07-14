@@ -25,6 +25,7 @@ import torch
 
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
+from diffnext.utils.omegaconf_utils import OmegaConfEncoder
 
 
 def get_pipeline_path(
@@ -69,7 +70,7 @@ def get_pipeline_path(
     for k, v in (module_config or {}).items():
         config_file = os.path.join(target_path, k, "config.json")
         os.remove(config_file) if v and os.path.exists(config_file) else None
-        json.dump(v, open(config_file, "w")) if v else None
+        json.dump(v, open(config_file, "w"), cls=OmegaConfEncoder) if v else None
     json.dump(model_index, open(os.path.join(target_path, "model_index.json"), "w"))
     return target_path
 

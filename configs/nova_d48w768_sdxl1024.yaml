@@ -12,21 +12,28 @@ model:
   name: "transformer"
   gradient_checkpointing: 0  # {0, 1, 2, 3}
   loss_repeat: 4
-  params:
-    image_dim: 4
-    image_size: [1024, 1024]
-    image_stride: 8
-    text_token_dim: 2560
-    text_token_len: 256
-    rotary_pos_embed: false
-    video_base_size: [1, 32, 32]
-    image_base_size: [64, 64]
-    arch: [vit_d16w768, vit_d32w768, mlp_d6w768]
 
 pipeline:
   target: diffnext.pipelines.nova.pipeline_train_t2i.NOVATrainT2IPipeline
   paths:
-      pretrained_path: /path/to/nova-d48w768-sdxl1024
+    pretrained_path: /path/to/nova-d48w768-sdxl1024
+    module_dict:
+      scheduler: ${pipeline.paths.pretrained_path}/scheduler
+      text_encoder: ${pipeline.paths.pretrained_path}/text_encoder
+      tokenizer: ${pipeline.paths.pretrained_path}/tokenizer
+      vae: ${pipeline.paths.pretrained_path}/vae
+      model_index: ${pipeline.paths.pretrained_path}/model_index.json
+    module_config:
+      transformer:
+        image_dim: 4
+        image_size: [1024, 1024]
+        image_stride: 8
+        text_token_dim: 2560
+        text_token_len: 256
+        rotary_pos_embed: false
+        video_base_size: [1, 32, 32]
+        image_base_size: [64, 64]
+        arch: [vit_d16w768, vit_d32w768, mlp_d6w768]
 
 optimizer:
   target: torch.optim.AdamW

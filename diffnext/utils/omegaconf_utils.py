@@ -16,9 +16,19 @@
 """Omegaconf utilities."""
 
 import importlib
+import json
 from typing import List
 
 import omegaconf
+
+
+class OmegaConfEncoder(json.JSONEncoder):
+    """Custom JSON encoder for omegaconf objects."""
+
+    def default(self, obj):
+        if isinstance(obj, (omegaconf.ListConfig, omegaconf.DictConfig)):
+            return omegaconf.OmegaConf.to_container(obj, resolve=True)
+        return super().default(obj)
 
 
 def get_config() -> omegaconf.DictConfig:
