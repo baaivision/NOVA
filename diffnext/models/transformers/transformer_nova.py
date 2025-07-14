@@ -24,7 +24,7 @@ from diffnext.models.embeddings import MaskEmbed, MotionEmbed, TextEmbed, LabelE
 from diffnext.models.normalization import AdaLayerNorm
 from diffnext.models.transformers.transformer_3d import Transformer3DModel
 from diffnext.models.vision_transformer import VisionTransformer
-from diffnext.utils import Registry
+from diffnext.utils.registry import Registry
 
 VIDEO_ENCODERS = Registry("video_encoders")
 IMAGE_ENCODERS = Registry("image_encoders")
