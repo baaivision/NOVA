@@ -17,3 +17,4 @@
 
 from diffnext.utils.export_utils import export_to_image
 from diffnext.utils.export_utils import export_to_video
+from diffnext.utils.registry import Registry
