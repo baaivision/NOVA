@@ -24,7 +24,6 @@ from diffnext.pipelines.builder import build_diffusion_scheduler
 from diffnext.pipelines.nova.pipeline_utils import PipelineMixin
 
 
-@PIPELINES.register("nova_train_t2v")
 class NOVATrainT2VPipeline(DiffusionPipeline, PipelineMixin):
     """Pipeline for training NOVA T2V models."""
 
