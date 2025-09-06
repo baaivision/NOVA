@@ -42,6 +42,8 @@ def prepare_checkpoints(config):
     elif config.experiment.resume_from_checkpoint:
         resume_iter = int(os.path.split(config.experiment.resume_from_checkpoint).split("-")[-1])
     config.experiment.resume_iter = resume_iter
+    if resume_iter:  # Override the pretrained path specified in the config.
+        config.pipeline.paths.pretrained_path = config.experiment.resume_from_checkpoint
 
 
 def prepare_datasets(config, accelerator):

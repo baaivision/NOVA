@@ -33,8 +33,8 @@ class FlexAttentionCausal2D(nn.Module):
 
     def __init__(self):
         super(FlexAttentionCausal2D, self).__init__()
-        self.attn_func, self.offsets = None, None
-        self.cu_offsets, self.block_mask = None, None
+        self.attn_func = self.offsets = self.flags = None
+        self.cu_offsets = self.block_mask = None
 
     def set_offsets(self, offsets: List[int]):
         """Set block-wise mask offsets."""
@@ -42,16 +42,22 @@ class FlexAttentionCausal2D(nn.Module):
         if offsets != self.offsets:
             self.offsets, self.block_mask = offsets, None
 
-    def set_offsets_by_lens(self, lens: List[int]):
+    def set_offsets_by_lens(self, lens, flags=None):
         """Set block-wise mask offsets by lengths."""
         self.set_offsets(list(accumulate(type(lens)([0]) + lens if lens[0] != 0 else lens)))
+        self.flags = flags  # Bidirectional flags.
 
     def get_mask_mod(self) -> callable:
         """Return the mask modification."""
         counts = self.cu_offsets[1:] - self.cu_offsets[:-1]
         ids = torch.arange(len(counts), device=self.cu_offsets.device, dtype=torch.int32)
         ids = ids.repeat_interleave(counts)
-        return lambda b, h, q_idx, kv_idx: (q_idx >= kv_idx) | (ids[q_idx] == ids[kv_idx])
+        if self.flags is None:
+            return lambda b, h, qi, ki: (qi >= ki) | (ids[qi] == ids[ki])
+        flags = list(self.flags) + [0] * (len(counts) - len(self.flags))
+        flags = torch.as_tensor(flags, device=self.cu_offsets.device, dtype=torch.bool)
+        flags = flags.repeat_interleave(counts)
+        return lambda b, h, qi, ki: (qi >= ki) | (ids[qi] == ids[ki] and flags[qi])
 
     def get_attn_func(self) -> callable:
         """Return the attention function."""
@@ -66,12 +72,10 @@ class FlexAttentionCausal2D(nn.Module):
         if self.block_mask is not None:
             return self.block_mask
         b, h, q_len = q.shape[:3]
-        q_pad = (self.offsets[-1] + 127) // 128 * 128 - q_len
-        offsets_pad = self.offsets + ([self.offsets[-1] + q_pad] if q_pad else [])
-        args = {"B": b, "H": h, "Q_LEN": q_len + q_pad, "KV_LEN": q_len + q_pad, "_compile": True}
-        self.cu_offsets = torch.as_tensor(offsets_pad, device=q.device, dtype=torch.int32)
+        args = {"B": b, "H": h, "Q_LEN": q_len, "KV_LEN": q_len, "_compile": True}
+        self.cu_offsets = torch.as_tensor(self.offsets, device=q.device, dtype=torch.int32)
         self.block_mask = create_block_mask(self.get_mask_mod(), **args)
         return self.block_mask
 
     def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-        return self.get_attn_func()(q, k, v, block_mask=self.get_block_mask(q))
+        return self.get_attn_func()(q, k, v, block_mask=self.get_block_mask(q), enable_gqa=True)

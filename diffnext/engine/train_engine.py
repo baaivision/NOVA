@@ -98,11 +98,10 @@ class Trainer(object):
                 The current iteration stats.
         """
         iter_template = "Iteration %d, lr = %.8f, time = %.2fs"
-        metric_template = " " * 4 + "Train net output({}): {:.4f} ({:.4f})"
-        self.logger.info(iter_template % (stats["step"], stats["lr"], stats["time"]))
-        for k, v in self.metrics.items():
-            self.logger.info(metric_template.format(k, stats["metrics"][k], v.average()))
-        tracker_logs = dict((k, stats["metrics"][k]) for k in self.metrics.keys())
+        metric_template = " " * 4 + "Train net output({}): {}"
+        [self.logger.info(iter_template % (stats["step"], stats["lr"], stats["time"]))]
+        [self.logger.info(metric_template.format(k, v)) for k, v in self.metrics.items()]
+        tracker_logs = dict((k, v.median) for k, v in self.metrics.items())
         tracker_logs.update({"lr": stats["lr"], "time": stats["time"]})
         self.accelerator.log(tracker_logs, step=stats["step"])
         self.metrics.clear()

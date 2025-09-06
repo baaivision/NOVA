@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 from diffnext.image_processor import VaeImageProcessor
-from diffnext.pipelines.nova.pipeline_utils import NOVAPipelineOutput, PipelineMixin
+from diffnext.pipelines.pipeline_utils import NOVAPipelineOutput, PipelineMixin
 
 
 class NOVAPipeline(DiffusionPipeline, PipelineMixin):

@@ -21,7 +21,7 @@ import torch
 
 from diffnext.engine import engine_utils
 from diffnext.pipelines.builder import build_diffusion_scheduler
-from diffnext.pipelines.nova.pipeline_utils import PipelineMixin
+from diffnext.pipelines.pipeline_utils import PipelineMixin
 
 
 class NOVATrainT2IPipeline(DiffusionPipeline, PipelineMixin):
