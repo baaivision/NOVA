@@ -3,7 +3,7 @@
 <h1>Autoregressive Video Generation without Vector Quantization</h1>
 
 <p align="center">
-<a href="https://arxiv.org/abs/2412.14169"><img src="https://img.shields.io/badge/ArXiv-2412.14169-%23840707.svg" alt="ArXiv"></a>
+<a href="https://arxiv.org/abs/2412.14169"><img src="https://img.shields.io/badge/ArXiv-2512.14169-%23840707.svg" alt="ArXiv"></a>
 <a href="https://huggingface.co/spaces/BAAI/nova-d48w1024-sdxl1024"><img src="https://img.shields.io/badge/🤗 Demo-T2I-%26840707.svg" alt="T2IDemo"></a>
 <a href="https://huggingface.co/spaces/BAAI/nova-d48w1024-osp480"><img src="https://img.shields.io/badge/🤗 Demo-T2V-%26840707.svg" alt="T2VDemo"></a>
 <a href="http://bitterdhg.github.io/NOVA_page"><img src="https://img.shields.io/badge/Webpage-NOVA-%237CB4F7.svg" alt="Webpage"></a>
@@ -20,6 +20,7 @@
 We present **NOVA** (**NO**n-Quantized **V**ideo **A**utoregressive Model), a model that enables autoregressive image/video generation with high efficiency. **NOVA** reformulates the video generation problem as non-quantized autoregressive modeling of temporal *frame-by-frame* prediction and spatial *set-by-set* prediction. **NOVA** generalizes well and enables diverse zero-shot generation abilities in one unified model.
 
 ## 🚀News
+- ```[Oct 2025]``` Released our next video generation model 🐻 [URSA](https://github.com/baaivision/URSA).
 - ```[Jul 2025]``` Codebase refactor with **Accelerate**, **OmegaConf** and **Wandb**.
 - ```[Feb 2025]``` Released [Evaluation Guide](./docs/evaluation.md).
 - ```[Feb 2025]``` Released [Training Guide](./docs/training.md)
@@ -215,6 +216,14 @@ python scripts/app_nova_t2v.py --model "BAAI/nova-d48w1024-osp480" --device 0
 
 ## Citation
 If you find this repository useful, please consider giving a star ⭐ and citation 🦖:
+```
+@article{deng2025ursa,
+  title={Uniform Discrete Diffusion with Metric Path for Video Generation},
+  author={Deng, Haoge and Pan, Ting and Zhang, Fan and Liu, Yang and Luo, Zhuoyan and Cui, Yufeng and Shen, Chunhua and Shan, Shiguang and Zhang, Zhaoxiang and Wang, Xinlong},
+  journal={arXiv preprint arXiv:2510.24717},
+  year={2025}
+}
+```
 ```
 @article{deng2024nova,
   title={Autoregressive Video Generation without Vector Quantization},
